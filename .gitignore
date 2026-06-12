@@ -1,0 +1,5 @@
+stackobrite-agent
+stackobrite-agent.bak
+stackobrite-agent.new
+*.test
+*.prof
