@@ -27,7 +27,9 @@ type VersionInfo struct {
 }
 
 type UpdateRequest struct {
-	BinaryURL string `json:"binary_url"`
+	S3Bucket  string `json:"s3_bucket"`
+	S3Key     string `json:"s3_key"`
+	Region    string `json:"region"`
 	CheckOnly bool   `json:"check_only"`
 }
 
@@ -71,9 +73,13 @@ func SelfUpdate(binaryDir string) http.HandlerFunc {
 			return
 		}
 
-		if req.BinaryURL == "" {
-			http.Error(w, `{"error":"binary_url is required"}`, http.StatusBadRequest)
+		if req.S3Bucket == "" || req.S3Key == "" {
+			http.Error(w, `{"error":"s3_bucket and s3_key are required"}`, http.StatusBadRequest)
 			return
+		}
+
+		if req.Region == "" {
+			req.Region = "us-east-1"
 		}
 
 		resp := UpdateResponse{Current: Version}
@@ -97,7 +103,9 @@ func SelfUpdate(binaryDir string) http.HandlerFunc {
 		tmpPath := currentPath + ".new"
 		backupPath := currentPath + ".bak"
 
-		if err := downloadBinary(req.BinaryURL, tmpPath); err != nil {
+		s3URI := fmt.Sprintf("s3://%s/%s", req.S3Bucket, req.S3Key)
+
+		if err := downloadFromS3(s3URI, tmpPath, req.Region); err != nil {
 			resp.Error = fmt.Sprintf("download failed: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -146,24 +154,11 @@ func SelfUpdate(binaryDir string) http.HandlerFunc {
 	}
 }
 
-func downloadBinary(url, dest string) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Get(url)
+func downloadFromS3(s3URI, dest, region string) error {
+	cmd := exec.Command("aws", "s3", "cp", s3URI, dest, "--region", region)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return err
+		return fmt.Errorf("aws s3 cp failed: %s: %w", string(output), err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
+	return nil
 }
